@@ -1,14 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  HIPAA-Compliant S3 Data Lake with KMS Encryption, Access Logging, and Restricted Access.
+  HIPAA-Compliant S3 Data Lake with KMS Encryption, Access Logging, and Restricted Access (Fixed Suffix).
 
 Parameters:
-  BucketName:
-    Type: String
-    Description: Name of the HIPAA-compliant S3 data lake bucket.
-  LoggingBucketName:
-    Type: String
-    Description: Name of the bucket for access logging.
   ETLRoleArn:
     Type: String
     Description: IAM Role ARN for ETL jobs (Glue/SageMaker).
@@ -37,7 +31,7 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     Properties:
-      BucketName: !Ref LoggingBucketName
+      BucketName: healthcare-logs-07091998-csk
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -52,7 +46,7 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     Properties:
-      BucketName: !Ref BucketName
+      BucketName: healthcare-data-lake-07091998-csk
       LoggingConfiguration:
         DestinationBucketName: !Ref LoggingBucket
         LogFilePrefix: access-logs/
@@ -89,8 +83,8 @@ Resources:
               - s3:PutObject
               - s3:ListBucket
             Resource:
-              - !Sub arn:aws:s3:::${BucketName}
-              - !Sub arn:aws:s3:::${BucketName}/*
+              - !Sub arn:aws:s3:::${DataLakeBucket}
+              - !Sub arn:aws:s3:::${DataLakeBucket}/*
 
 Outputs:
   DataLakeBucketName:
