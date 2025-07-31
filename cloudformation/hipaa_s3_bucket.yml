@@ -33,11 +33,18 @@ Resources:
             Resource: "*"
 
   ### 2. Logging Bucket (HIPAA Audit Rule)
-  LoggingBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Ref LoggingBucketName
-      AccessControl: LogDeliveryWrite
+LoggingBucket:
+  Type: AWS::S3::Bucket
+  Properties:
+    BucketName: !Ref LoggingBucketName
+    OwnershipControls:
+      Rules:
+        - ObjectOwnership: BucketOwnerEnforced
+    PublicAccessBlockConfiguration:
+      BlockPublicAcls: true
+      BlockPublicPolicy: true
+      IgnorePublicAcls: true
+      RestrictPublicBuckets: true
 
   ### 3. HIPAA-Compliant Data Lake Bucket
   DataLakeBucket:
