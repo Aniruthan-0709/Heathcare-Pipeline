@@ -18,6 +18,7 @@ Resources:
   ### 1. KMS Key for Encryption (HIPAA Security Rule)
   DataLakeKMSKey:
     Type: AWS::KMS::Key
+    DeletionPolicy: Retain
     Properties:
       Description: "KMS key for HIPAA-compliant S3 encryption"
       EnableKeyRotation: true
