@@ -33,26 +33,28 @@ Resources:
             Resource: "*"
 
   ### 2. Logging Bucket (HIPAA Audit Rule)
-LoggingBucket:
-  Type: AWS::S3::Bucket
-  Properties:
-    BucketName: !Ref LoggingBucketName
-    OwnershipControls:
-      Rules:
-        - ObjectOwnership: BucketOwnerEnforced
-    PublicAccessBlockConfiguration:
-      BlockPublicAcls: true
-      BlockPublicPolicy: true
-      IgnorePublicAcls: true
-      RestrictPublicBuckets: true
+  LoggingBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Ref LoggingBucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   ### 3. HIPAA-Compliant Data Lake Bucket
   DataLakeBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
       BucketName: !Ref BucketName
       LoggingConfiguration:
-        DestinationBucketName: !Ref LoggingBucketName
+        DestinationBucketName: !Ref LoggingBucket
         LogFilePrefix: access-logs/
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -61,6 +63,9 @@ LoggingBucket:
               KMSMasterKeyID: !Ref DataLakeKMSKey
       VersioningConfiguration:
         Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
