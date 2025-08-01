@@ -28,5 +28,5 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/glue_etl_workflow.yml \
             --stack-name healthcare-glue-workflow \
-            --parameter-overrides ETLRoleArn=arn:aws:iam::<ACCOUNT_ID>:role/HealthcarePipelineRole \
+            --parameter-overrides ETLRoleArn=arn:aws:iam::${{secrets.AWS_ACCOUNT_ID}}:role/HealthcarePipelineRole \
             --capabilities CAPABILITY_NAMED_IAM
