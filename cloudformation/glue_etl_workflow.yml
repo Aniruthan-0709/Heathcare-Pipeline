@@ -1,98 +1,66 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  HIPAA-Compliant S3 Data Lake with KMS Encryption, Access Logging, and Restricted Access (Fixed Suffix).
+Description: HIPAA-Compliant Glue Workflow (Bronze → Silver → Gold)
 
 Parameters:
-  ETLRoleArn:
+  ScriptBucket:
     Type: String
-    Description: IAM Role ARN for ETL jobs (Glue/SageMaker).
+    Default: healthcare-data-lake-07091998-csk
 
 Resources:
-
-  ### 1. KMS Key for Encryption (HIPAA Security Rule)
-  DataLakeKMSKey:
-    Type: AWS::KMS::Key
-    DeletionPolicy: Retain
+  GlueWorkflow:
+    Type: AWS::Glue::Workflow
     Properties:
-      Description: "KMS key for HIPAA-compliant S3 encryption"
-      EnableKeyRotation: true
-      KeyPolicy:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AllowRootAccountAccess
-            Effect: Allow
-            Principal:
-              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
-            Action: "kms:*"
-            Resource: "*"
+      Name: healthcare-etl-workflow
 
-  ### 2. Logging Bucket (HIPAA Audit Rule)
-  LoggingBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+  BronzeToSilverJob:
+    Type: AWS::Glue::Job
     Properties:
-      BucketName: healthcare-logs-07091998-csk
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+      Name: bronze-to-silver
+      Role: arn:aws:iam::593026487135:role/HealthcarePipelineRole
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${ScriptBucket}/scripts/bronze_to_silver.py
+        PythonVersion: 3
+      GlueVersion: "3.0"
+      WorkerType: G.1X
+      NumberOfWorkers: 2
 
-  ### 3. HIPAA-Compliant Data Lake Bucket
-  DataLakeBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
+  SilverToGoldJob:
+    Type: AWS::Glue::Job
     Properties:
-      BucketName: healthcare-data-lake-07091998-csk
-      LoggingConfiguration:
-        DestinationBucketName: !Ref LoggingBucket
-        LogFilePrefix: access-logs/
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: aws:kms
-              KMSMasterKeyID: !Ref DataLakeKMSKey
-      VersioningConfiguration:
-        Status: Enabled
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+      Name: silver-to-gold
+      Role: arn:aws:iam::593026487135:role/HealthcarePipelineRole
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub s3://${ScriptBucket}/scripts/silver_to_gold.py
+        PythonVersion: 3
+      GlueVersion: "3.0"
+      WorkerType: G.1X
+      NumberOfWorkers: 2
 
-  ### 4. Restrict Bucket Access to ETL Role Only
-  DataLakeBucketPolicy:
-    Type: AWS::S3::BucketPolicy
+  BronzeTrigger:
+    Type: AWS::Glue::Trigger
     Properties:
-      Bucket: !Ref DataLakeBucket
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Sid: AllowETLRoleAccess
-            Effect: Allow
-            Principal:
-              AWS: !Ref ETLRoleArn
-            Action:
-              - s3:GetObject
-              - s3:PutObject
-              - s3:ListBucket
-            Resource:
-              - !Sub arn:aws:s3:::${DataLakeBucket}
-              - !Sub arn:aws:s3:::${DataLakeBucket}/*
+      Name: bronze-to-silver-trigger
+      WorkflowName: !Ref GlueWorkflow
+      Type: JOB
+      Actions:
+        - JobName: !Ref BronzeToSilverJob
+
+  SilverTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: silver-to-gold-trigger
+      WorkflowName: !Ref GlueWorkflow
+      Type: CONDITIONAL
+      Predicate:
+        Conditions:
+          - JobName: !Ref BronzeToSilverJob
+            State: SUCCEEDED
+      Actions:
+        - JobName: !Ref SilverToGoldJob
 
 Outputs:
-  DataLakeBucketName:
-    Description: HIPAA S3 Data Lake Bucket
-    Value: !Ref DataLakeBucket
-  LoggingBucketName:
-    Description: Access Logging Bucket
-    Value: !Ref LoggingBucket
-  KMSKeyArn:
-    Description: HIPAA KMS Key ARN
-    Value: !Ref DataLakeKMSKey
+  WorkflowName:
+    Value: !Ref GlueWorkflow
+    Description: Glue Workflow Name
