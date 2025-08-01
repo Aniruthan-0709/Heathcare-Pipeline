@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: HIPAA-Compliant Glue Workflow (Bronze to Silver to Gold)
+Description: HIPAA-Compliant Glue Workflow (Bronze → Silver → Gold)
 
 Parameters:
   ScriptBucket:
@@ -38,6 +38,15 @@ Resources:
       WorkerType: G.1X
       NumberOfWorkers: 2
 
+  BronzeTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: bronze-to-silver-trigger
+      Type: ON_DEMAND
+      WorkflowName: !Ref GlueWorkflow
+      Actions:
+        - JobName: !Ref BronzeToSilverJob
+
   SilverTrigger:
     Type: AWS::Glue::Trigger
     Properties:
@@ -45,10 +54,10 @@ Resources:
       Type: CONDITIONAL
       WorkflowName: !Ref GlueWorkflow
       Predicate:
-        Logical: "AND"
         Conditions:
           - JobName: !Ref BronzeToSilverJob
             State: SUCCEEDED
+        Logical: "AND"   # ✅ Logical operator explicitly set
       Actions:
         - JobName: !Ref SilverToGoldJob
 
