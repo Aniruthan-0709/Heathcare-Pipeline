@@ -38,30 +38,7 @@ Resources:
       WorkerType: G.1X
       NumberOfWorkers: 2
 
-  BronzeTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: bronze-to-silver-trigger
-      Type: ON_DEMAND
-      WorkflowName: !Ref GlueWorkflow
-      Actions:
-        - JobName: !Ref BronzeToSilverJob
-
-  SilverTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: silver-to-gold-trigger
-      Type: CONDITIONAL
-      WorkflowName: !Ref GlueWorkflow
-      Predicate:
-        Conditions:
-          - JobName: !Ref BronzeToSilverJob
-            State: SUCCEEDED
-        Logical: "AND"   # ✅ Logical operator explicitly set
-      Actions:
-        - JobName: !Ref SilverToGoldJob
-
 Outputs:
   WorkflowName:
-    Description: Glue Workflow Name
     Value: !Ref GlueWorkflow
+    Description: Glue Workflow Name
