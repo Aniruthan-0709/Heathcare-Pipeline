@@ -38,15 +38,6 @@ Resources:
       WorkerType: G.1X
       NumberOfWorkers: 2
 
-  BronzeTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: bronze-to-silver-trigger
-      Type: ON_DEMAND
-      WorkflowName: !Ref GlueWorkflow
-      Actions:
-        - JobName: !Ref BronzeToSilverJob
-
   SilverTrigger:
     Type: AWS::Glue::Trigger
     Properties:
