@@ -1,6 +1,7 @@
 name: Deploy Glue ETL
 
-on: workflow_dispatch
+on: 
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -27,4 +28,5 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/glue_etl_workflow.yml \
             --stack-name healthcare-glue-workflow \
+            --parameter-overrides ETLRoleArn=arn:aws:iam::<ACCOUNT_ID>:role/HealthcarePipelineRole \
             --capabilities CAPABILITY_NAMED_IAM
