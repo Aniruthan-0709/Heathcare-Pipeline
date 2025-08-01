@@ -45,7 +45,7 @@ Resources:
       Type: CONDITIONAL
       WorkflowName: !Ref GlueWorkflow
       Predicate:
-        Logical: AND
+        Logical: "AND"
         Conditions:
           - JobName: !Ref BronzeToSilverJob
             State: SUCCEEDED
