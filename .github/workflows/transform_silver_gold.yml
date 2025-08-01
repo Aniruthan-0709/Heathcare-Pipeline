@@ -15,14 +15,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      # 1️⃣ Upload ETL Scripts First
+      - name: Upload ETL Scripts to S3
+        run: |
+          aws s3 cp etl/bronze_to_silver.py s3://healthcare-data-lake-07091998-csk/scripts/
+          aws s3 cp etl/silver_to_gold.py s3://healthcare-data-lake-07091998-csk/scripts/
+
+      # 2️⃣ Then Deploy Glue Workflow Stack
       - name: Deploy Glue Workflow
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/glue_etl_workflow.yml \
             --stack-name healthcare-glue-workflow \
             --capabilities CAPABILITY_NAMED_IAM
-
-      - name: Upload ETL Scripts
-        run: |
-          aws s3 cp etl/bronze_to_silver.py s3://healthcare-data-lake-07091998-csk/scripts/
-          aws s3 cp etl/silver_to_gold.py s3://healthcare-data-lake-07091998-csk/scripts/
