@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: HIPAA-Compliant Glue Workflow (Bronze → Silver → Gold)
+Description: Glue Workflow for Healthcare Pipeline
 
 Parameters:
   ScriptBucket:
@@ -41,4 +41,4 @@ Resources:
 Outputs:
   WorkflowName:
     Value: !Ref GlueWorkflow
-    Description: Glue Workflow Name
+    Description: Name of the Glue Workflow
