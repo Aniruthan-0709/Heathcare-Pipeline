@@ -1,0 +1,28 @@
+name: Deploy Glue ETL
+
+on: workflow_dispatch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS CLI
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy Glue Workflow
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/glue_etl_workflow.yml \
+            --stack-name healthcare-glue-workflow \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Upload ETL Scripts
+        run: |
+          aws s3 cp etl/bronze_to_silver.py s3://healthcare-data-lake-07091998-csk/scripts/
+          aws s3 cp etl/silver_to_gold.py s3://healthcare-data-lake-07091998-csk/scripts/
