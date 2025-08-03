@@ -6,7 +6,7 @@ import boto3
 spark = SparkSession.builder.appName("BronzeToSilver").getOrCreate()
 
 # S3 paths
-bronze_path = "s3://healthcare-data-lake-07091998-csk/bronze/uci_diabetes.csv"
+bronze_path = "s3://healthcare-data-lake-07091998-csk/bronze/uci_diabetes_raw.csv"
 silver_folder = "s3://healthcare-data-lake-07091998-csk/silver/"
 
 # Create Silver folder explicitly using boto3 (if not exists)
