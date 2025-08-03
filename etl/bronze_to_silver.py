@@ -14,10 +14,8 @@ s3 = boto3.client("s3")
 bucket_name = "healthcare-data-lake-07091998-csk"
 silver_prefix = "silver/"
 
-# Check if the prefix exists
 response = s3.list_objects_v2(Bucket=bucket_name, Prefix=silver_prefix)
 if 'Contents' not in response:
-    # Create an empty placeholder file to establish the folder
     s3.put_object(Bucket=bucket_name, Key=f"{silver_prefix}_placeholder")
 
 print(f"Ensured {silver_folder} exists.")
@@ -25,11 +23,19 @@ print(f"Ensured {silver_folder} exists.")
 # Load Bronze
 df_bronze = spark.read.csv(bronze_path, header=True, inferSchema=True)
 
-# 1. Remove PHI (Safe Harbor)
-df_silver = (
-    df_bronze
-    .withColumn("patient_id_hashed", F.sha2(F.col("patient_nbr").cast("string"), 256))
-    .drop("patient_nbr")
+# 1. Create synthetic patient_id_hashed (since patient_nbr is missing)
+df_silver = df_bronze.withColumn(
+    "patient_id_hashed",
+    F.sha2(
+        F.concat_ws(
+            "_",
+            F.col("race"),
+            F.col("gender"),
+            F.col("age"),
+            F.col("admission_type_id").cast("string"),
+            F.col("time_in_hospital").cast("string")
+        ), 256
+    )
 )
 
 # 2. Impute & Clean
@@ -44,8 +50,8 @@ df_silver = df_silver.withColumn(
 df_silver = df_silver.withColumn(
     "high_risk",
     F.when(
-        (F.col("age").isin("[60-70)", "[70-80)", "[80-90)", "[90-100)")) & 
-        (F.col("a1cresult") == ">8"),
+        (F.col("age").isin("[60-70)", "[70-80)", "[80-90)", "[90-100)")) &
+        (F.col("A1Cresult").isin(">8", "Norm")),  # adjust condition if needed
         1
     ).otherwise(0)
 )
