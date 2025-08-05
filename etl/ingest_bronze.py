@@ -8,7 +8,8 @@ import numpy as np
 # --- S3 Config ---
 bucket_name = "healthcare-data-lake-07091998-csk"
 bronze_key = "bronze/uci_diabetes_raw.csv"
-delta_key = "metadata/delta.json"
+metadata_prefix = "metadata/"
+delta_key = f"{metadata_prefix}delta.json"
 
 s3 = boto3.client("s3")
 
@@ -24,26 +25,33 @@ df_uci['gender'] = np.where(df_uci['number_outpatient'] > 0, 'female',
                             np.random.choice(['male', 'female'], size=len(df_uci)))
 
 # ------------------------
-# 2. Retrieve Last Run Timestamp (CDC Tracking)
+# 2. Check and Retrieve/Create delta.json
 # ------------------------
-def get_last_run_ts():
+def get_or_create_last_run_ts():
     try:
+        # Try fetching delta.json
         obj = s3.get_object(Bucket=bucket_name, Key=delta_key)
         data = json.loads(obj['Body'].read())
         last_run_ts = data.get("last_run_ts", "1900-01-01 00:00:00")
-        print(f"✅ Last Run Timestamp Retrieved: {last_run_ts}")
+        print(f"✅ Found delta.json. Last Run Timestamp: {last_run_ts}")
         return last_run_ts
     except s3.exceptions.NoSuchKey:
-        print("⚠️ No delta.json found. Using default past timestamp.")
-        return "1900-01-01 00:00:00"
+        # If missing, initialize with default
+        print("⚠️ No delta.json found. Initializing with default timestamp.")
+        default_ts = "1900-01-01 00:00:00"
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=delta_key,
+            Body=json.dumps({"last_run_ts": default_ts}, indent=4),
+            ServerSideEncryption="aws:kms"
+        )
+        print(f"✅ Created delta.json with last_run_ts: {default_ts}")
+        return default_ts
 
-last_run_ts = get_last_run_ts()
-
-# Add ingestion timestamp for CDC tracking
-df_uci["last_updated_ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+last_run_ts = get_or_create_last_run_ts()
 
 # ------------------------
-# 3. Save Locally
+# 3. Save dataset locally
 # ------------------------
 df_uci.to_csv("uci_diabetes_raw.csv", index=False)
 print("✅ Saved raw PHI dataset locally")
@@ -58,7 +66,3 @@ s3.upload_file(
     ExtraArgs={"ServerSideEncryption": "aws:kms"}
 )
 print(f"✅ Uploaded securely to s3://{bucket_name}/{bronze_key}")
-
-# ✅ IMPORTANT:
-# Do NOT update delta.json here.
-# Delta timestamp will be updated only AFTER Gold ETL completes successfully.
