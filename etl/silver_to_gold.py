@@ -6,10 +6,12 @@ from awsglue.job import Job
 import pyspark.sql.functions as F
 from pyspark.sql.types import IntegerType
 from datetime import datetime
+import boto3
+import json
 
 # Glue Job Init
-args = getResolvedOptions(sys.argv, ["JOB_NAME", "LAST_RUN_TS"])  # Added CDC parameter
-last_run_ts = args["LAST_RUN_TS"]  # Timestamp of last ETL run (passed in via EventBridge or ParamStore)
+args = getResolvedOptions(sys.argv, ["JOB_NAME", "LAST_RUN_TS"])
+last_run_ts = args["LAST_RUN_TS"]
 
 sc = SparkContext()
 glueContext = GlueContext(sc)
@@ -20,6 +22,8 @@ job.init(args["JOB_NAME"], args)
 # Paths
 silver_path = "s3://healthcare-data-lake-07091998-csk/silver/"
 gold_path = "s3://healthcare-data-lake-07091998-csk/gold/"
+bucket_name = "healthcare-data-lake-07091998-csk"
+metadata_prefix = "metadata/gold_silver/"
 
 # --- Read Silver Layer ---
 df = spark.read.parquet(silver_path)
@@ -28,38 +32,35 @@ df = spark.read.parquet(silver_path)
 if "last_updated_ts" in df.columns:
     df = df.filter(F.col("last_updated_ts") > F.lit(last_run_ts))
 
-# --- Feature Engineering (Same Logic as Before) ---
-
-# 1. Age midpoint
+# --- Feature Engineering Mappings ---
 age_map = {"[0-10)": 5, "[10-20)": 15, "[20-30)": 25, "[30-40)": 35,
            "[40-50)": 45, "[50-60)": 55, "[60-70)": 65, "[70-80)": 75,
            "[80-90)": 85, "[90-100)": 95}
+gender_map = {"male": 1, "female": 0}
+readmission_flag_map = {"<30": 1, ">30": 0, "NO": 0}
+a1c_encoded_map = {">8": 2, "7-8": 1, "Norm": 0}
+glu_encoded_map = {">300": 3, ">200": 2, "Norm": 0}
+medication_encoding = {"Up": 1, "Down": -1, "Steady": 0, "No": 0}
+
+# --- Apply Feature Engineering ---
 age_udf = F.udf(lambda x: age_map.get(x, None), IntegerType())
 df = df.withColumn("age_num", age_udf(F.col("age")))
-
-# 2. Encode gender
 df = df.withColumn("gender_num",
                    F.when(F.lower(F.col("gender")) == "male", 1)
                     .when(F.lower(F.col("gender")) == "female", 0)
                     .otherwise(None))
-
-# 3. Readmission flag (<30 = 1, else 0)
 df = df.withColumn("readmission_flag", F.when(F.col("readmitted") == "<30", 1).otherwise(0))
-
-# 4. Encode lab results
 df = df.withColumn("a1c_encoded",
                    F.when(F.col("A1Cresult") == ">8", 2)
                     .when(F.col("A1Cresult") == "7-8", 1)
                     .when(F.col("A1Cresult") == "Norm", 0)
                     .otherwise(None))
-
 df = df.withColumn("glu_encoded",
                    F.when(F.col("max_glu_serum") == ">300", 3)
                     .when(F.col("max_glu_serum") == ">200", 2)
                     .when(F.col("max_glu_serum") == "Norm", 0)
                     .otherwise(None))
 
-# 5. Encode medications
 med_cols = [
     "metformin","repaglinide","nateglinide","chlorpropamide","glimepiride",
     "glipizide","glyburide","pioglitazone","rosiglitazone","acarbose",
@@ -72,23 +73,53 @@ for col in med_cols:
                         .when(F.col(col) == "Steady", 0)
                         .otherwise(0))
 
-# 6. Comorbidity count
 df = df.withColumn("comorbidity_count",
                    F.expr("size(array_remove(array(diag_1, diag_2, diag_3), null))"))
 
-# --- Drop non-ML columns ---
+# Drop non-ML columns
 drop_cols = ["race", "gender", "age", "readmitted", "max_glu_serum", "A1Cresult", "medical_specialty", "payer_code"]
 df = df.drop(*[c for c in drop_cols if c in df.columns])
 
 # Add ETL Load Timestamp
-df = df.withColumn("etl_load_ts", F.lit(datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+etl_load_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+df = df.withColumn("etl_load_ts", F.lit(etl_load_ts))
 
 # --- Write Gold Layer Incrementally ---
-df.write.mode("append") \   # APPEND for CDC
-    .partitionBy("readmission_flag") \
-    .format("parquet") \
-    .option("compression", "snappy") \
-    .save(gold_path)
+df.write.mode("append").partitionBy("readmission_flag").format("parquet").option("compression", "snappy").save(gold_path)
 
-print(f"Incremental Gold data appended to {gold_path}")
+print(f"✅ Incremental Gold data appended to {gold_path}")
+
+# --- Save Feature Mapping to S3 ---
+feature_mappings = {
+    "age_map": age_map,
+    "gender_map": gender_map,
+    "readmission_flag_map": readmission_flag_map,
+    "a1c_encoded_map": a1c_encoded_map,
+    "glu_encoded_map": glu_encoded_map,
+    "medication_encoding": medication_encoding,
+    "etl_load_ts": etl_load_ts
+}
+
+s3 = boto3.client("s3")
+
+# Save versioned mapping with timestamp
+versioned_key = f"{metadata_prefix}feature_mappings_{etl_load_ts}.json"
+s3.put_object(
+    Bucket=bucket_name,
+    Key=versioned_key,
+    Body=json.dumps(feature_mappings, indent=4),
+    ServerSideEncryption="aws:kms"
+)
+print(f"✅ Versioned mapping saved: s3://{bucket_name}/{versioned_key}")
+
+# Save/overwrite latest mapping for easy access
+latest_key = f"{metadata_prefix}feature_mappings_latest.json"
+s3.put_object(
+    Bucket=bucket_name,
+    Key=latest_key,
+    Body=json.dumps(feature_mappings, indent=4),
+    ServerSideEncryption="aws:kms"
+)
+print(f"✅ Latest mapping updated: s3://{bucket_name}/{latest_key}")
+
 job.commit()
