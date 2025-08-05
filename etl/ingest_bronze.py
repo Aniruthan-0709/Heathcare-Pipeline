@@ -24,19 +24,19 @@ df_uci['gender'] = np.where(df_uci['number_outpatient'] > 0, 'female',
                             np.random.choice(['male', 'female'], size=len(df_uci)))
 
 # ------------------------
-# 2. Check and Retrieve/Create delta.json
+# 2. Ensure metadata/delta.json exists (create if missing)
 # ------------------------
-def get_or_create_last_run_ts():
+def ensure_delta_json():
     try:
-        # Try fetching delta.json
+        s3.head_object(Bucket=bucket_name, Key=delta_key)
+        # If file exists, read it
         obj = s3.get_object(Bucket=bucket_name, Key=delta_key)
         data = json.loads(obj['Body'].read())
         last_run_ts = data.get("last_run_ts", "1900-01-01 00:00:00")
         print(f"✅ Found delta.json. Last Run Timestamp: {last_run_ts}")
         return last_run_ts
-    except s3.exceptions.NoSuchKey:
-        # If missing, initialize with default
-        print("⚠️ No delta.json found. Initializing with default timestamp.")
+    except s3.exceptions.ClientError:
+        # If missing, create it with default timestamp
         default_ts = "1900-01-01 00:00:00"
         s3.put_object(
             Bucket=bucket_name,
@@ -44,26 +44,22 @@ def get_or_create_last_run_ts():
             Body=json.dumps({"last_run_ts": default_ts}, indent=4),
             ServerSideEncryption="aws:kms"
         )
-        print(f"✅ Created delta.json with last_run_ts: {default_ts}")
+        print(f"⚠️ No delta.json found. Created new one with last_run_ts: {default_ts}")
         return default_ts
 
-last_run_ts = get_or_create_last_run_ts()
+last_run_ts = ensure_delta_json()
 
-# Format timestamp for safe filename usage
+# ------------------------
+# 3. Save Bronze file with versioned name (using last_run_ts)
+# ------------------------
 file_safe_ts = last_run_ts.replace(" ", "_").replace(":", "-")
-
-# Define Bronze file name using last_run_ts
 bronze_key = f"bronze/uci_raw_data_{file_safe_ts}.csv"
 
-# ------------------------
-# 3. Save dataset locally
-# ------------------------
+# Save locally
 df_uci.to_csv("uci_diabetes_raw.csv", index=False)
 print("✅ Saved raw PHI dataset locally")
 
-# ------------------------
-# 4. Upload to HIPAA Bronze (Encrypted)
-# ------------------------
+# Upload to Bronze
 s3.upload_file(
     Filename="uci_diabetes_raw.csv",
     Bucket=bucket_name,
