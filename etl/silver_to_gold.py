@@ -8,7 +8,6 @@ from pyspark.sql.types import IntegerType
 from datetime import datetime
 import boto3
 import json
-import re
 
 # ----------------------------
 # Glue Job Init
@@ -24,7 +23,6 @@ job.init(args["JOB_NAME"], args)
 # S3 Config
 # ----------------------------
 bucket_name = "healthcare-data-lake-07091998-csk"
-silver_prefix = "silver/"
 gold_path = f"s3://{bucket_name}/gold/"
 metadata_prefix = "metadata/gold_silver/"
 delta_key = "metadata/delta.json"
@@ -54,32 +52,21 @@ def fetch_last_run_ts():
 last_run_ts = fetch_last_run_ts()
 
 # ----------------------------
-# Step 2: Get Latest Silver Version Path
+# Step 2: Build Silver Path from last_run_ts
 # ----------------------------
-def get_latest_silver_path():
-    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=silver_prefix)
-    if "Contents" not in response:
-        raise Exception("❌ No Silver data found. Run Bronze → Silver first.")
+def format_ts_for_silver(ts: str) -> str:
+    # Convert "YYYY-MM-DD HH:MM:SS" → "YYYY-MM-DD_HH-MM-SS"
+    return ts.replace(" ", "_").replace(":", "-")
 
-    silver_versions = sorted(set([
-        obj["Key"].split("/")[1]
-        for obj in response["Contents"]
-        if re.match(r"uci_raw_data_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}", obj["Key"])
-    ]))
-
-    if not silver_versions:
-        raise Exception("❌ No valid Silver version folders found.")
-    
-    latest_version = silver_versions[-1]
-    print(f"✅ Latest Silver version detected: {latest_version}")
-    return f"s3://{bucket_name}/silver/{latest_version}"
-
-latest_silver_path = get_latest_silver_path()
+formatted_ts = format_ts_for_silver(last_run_ts)
+silver_versioned_path = f"s3://{bucket_name}/silver/uci_raw_data_{formatted_ts}/"
+print(f"✅ Reading Silver version from: {silver_versioned_path}")
 
 # ----------------------------
-# Step 3: Read Silver (CDC Filter)
+# Step 3: Read Silver Data (CDC)
 # ----------------------------
-df = spark.read.parquet(latest_silver_path)
+df = spark.read.parquet(silver_versioned_path)
+
 if "last_updated_ts" in df.columns:
     df = df.filter(F.col("last_updated_ts") > F.lit(last_run_ts))
 print(f"✅ Rows after CDC filtering: {df.count()}")
@@ -96,6 +83,7 @@ a1c_encoded_map = {">8": 2, "7-8": 1, "Norm": 0}
 glu_encoded_map = {">300": 3, ">200": 2, "Norm": 0}
 medication_encoding = {"Up": 1, "Down": -1, "Steady": 0, "No": 0}
 
+# Apply transformations
 age_udf = F.udf(lambda x: age_map.get(x, None), IntegerType())
 df = df.withColumn("age_num", age_udf(F.col("age")))
 df = df.withColumn("gender_num", 
@@ -114,6 +102,7 @@ df = df.withColumn("glu_encoded",
                     .when(F.col("max_glu_serum") == "Norm", 0)
                     .otherwise(None))
 
+# Medication Encoding
 med_cols = [
     "metformin","repaglinide","nateglinide","chlorpropamide","glimepiride",
     "glipizide","glyburide","pioglitazone","rosiglitazone","acarbose",
@@ -126,6 +115,7 @@ for col in med_cols:
                         .when(F.col(col) == "Steady", 0)
                         .otherwise(0))
 
+# Comorbidity count
 df = df.withColumn("comorbidity_count",
                    F.expr("size(array_remove(array(diag_1, diag_2, diag_3), null))"))
 
