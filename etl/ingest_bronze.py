@@ -7,7 +7,6 @@ import numpy as np
 
 # --- S3 Config ---
 bucket_name = "healthcare-data-lake-07091998-csk"
-bronze_key = "bronze/uci_diabetes_raw.csv"
 metadata_prefix = "metadata/"
 delta_key = f"{metadata_prefix}delta.json"
 
@@ -49,6 +48,12 @@ def get_or_create_last_run_ts():
         return default_ts
 
 last_run_ts = get_or_create_last_run_ts()
+
+# Format timestamp for safe filename usage
+file_safe_ts = last_run_ts.replace(" ", "_").replace(":", "-")
+
+# Define Bronze file name using last_run_ts
+bronze_key = f"bronze/uci_raw_data_{file_safe_ts}.csv"
 
 # ------------------------
 # 3. Save dataset locally
