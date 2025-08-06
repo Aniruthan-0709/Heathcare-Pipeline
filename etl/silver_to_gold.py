@@ -23,7 +23,6 @@ job.init(args["JOB_NAME"], args)
 # S3 Config
 # ----------------------------
 bucket_name = "healthcare-data-lake-07091998-csk"
-gold_path = f"s3://{bucket_name}/gold/"
 delta_key = "metadata/delta.json"
 s3 = boto3.client("s3")
 
@@ -53,18 +52,27 @@ last_run_ts = fetch_last_run_ts()
 # ----------------------------
 # Step 2: Build Silver Path from last_run_ts
 # ----------------------------
-def format_ts_for_silver(ts: str) -> str:
+def format_ts(ts: str) -> str:
     return ts.replace(" ", "_").replace(":", "-")
 
-formatted_ts = format_ts_for_silver(last_run_ts)
+formatted_ts = format_ts(last_run_ts)
 silver_versioned_path = f"s3://{bucket_name}/silver/uci_raw_data_{formatted_ts}/"
 print(f"✅ Reading Silver version from: {silver_versioned_path}")
 
 # ----------------------------
-# Step 3: Read Silver Data (CDC)
+# Step 3: Validate Silver Path Exists & Read Data
 # ----------------------------
+s3_resource = boto3.resource("s3")
+bucket = s3_resource.Bucket(bucket_name)
+prefix = f"silver/uci_raw_data_{formatted_ts}/"
+
+files = [obj.key for obj in bucket.objects.filter(Prefix=prefix) if obj.key.endswith(".parquet")]
+if not files:
+    raise Exception(f"❌ No Parquet files found at {silver_versioned_path}. Check Silver ETL output!")
+
 df = spark.read.parquet(silver_versioned_path)
 
+# CDC Filter
 if "last_updated_ts" in df.columns:
     df = df.filter(F.col("last_updated_ts") > F.lit(last_run_ts))
 print(f"✅ Rows after CDC filtering: {df.count()}")
@@ -126,17 +134,20 @@ etl_load_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 df = df.withColumn("etl_load_ts", F.lit(etl_load_ts))
 
 # ----------------------------
-# Step 5: Write Gold Incrementally
+# Step 5: Write Gold using PREVIOUS TIMESTAMP
 # ----------------------------
-df.write.mode("append") \
+prev_ts_folder = format_ts(last_run_ts)
+gold_versioned_path = f"s3://{bucket_name}/gold/{prev_ts_folder}/"
+
+df.write.mode("overwrite") \
     .partitionBy("readmission_flag") \
     .format("parquet") \
     .option("compression", "snappy") \
-    .save(gold_path)
-print(f"✅ Incremental Gold written to {gold_path}")
+    .save(gold_versioned_path)
+print(f"✅ Gold written to {gold_versioned_path}")
 
 # ----------------------------
-# Step 6: Save Metadata to metadata/silver_to_gold/{prev_ts}/
+# Step 6: Save Metadata under metadata/silver_to_gold/{prev_ts}/
 # ----------------------------
 feature_mappings = {
     "age_map": age_map,
@@ -149,7 +160,6 @@ feature_mappings = {
 }
 schema_dict = {field.name: field.dataType.simpleString() for field in df.schema.fields}
 
-prev_ts_folder = format_ts_for_silver(last_run_ts)
 metadata_path = f"metadata/silver_to_gold/{prev_ts_folder}/"
 
 s3.put_object(
@@ -167,7 +177,7 @@ s3.put_object(
 print(f"✅ Metadata saved under: {metadata_path}")
 
 # ----------------------------
-# Step 7: Update delta.json with new timestamp
+# Step 7: Update delta.json AFTER gold write
 # ----------------------------
 new_run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 s3.put_object(
@@ -176,9 +186,7 @@ s3.put_object(
     Body=json.dumps({"last_run_ts": new_run_ts}, indent=4),
     ServerSideEncryption="aws:kms"
 )
-print(f"✅ delta.json updated with last_run_ts: {new_run_ts}")
+print(f"✅ delta.json updated with new timestamp: {new_run_ts}")
 
-# ----------------------------
 # Commit Glue Job
-# ----------------------------
 job.commit()
