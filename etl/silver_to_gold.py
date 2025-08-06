@@ -24,7 +24,6 @@ job.init(args["JOB_NAME"], args)
 # ----------------------------
 bucket_name = "healthcare-data-lake-07091998-csk"
 gold_path = f"s3://{bucket_name}/gold/"
-metadata_prefix = "metadata/gold_silver/"
 delta_key = "metadata/delta.json"
 s3 = boto3.client("s3")
 
@@ -55,7 +54,6 @@ last_run_ts = fetch_last_run_ts()
 # Step 2: Build Silver Path from last_run_ts
 # ----------------------------
 def format_ts_for_silver(ts: str) -> str:
-    # Convert "YYYY-MM-DD HH:MM:SS" → "YYYY-MM-DD_HH-MM-SS"
     return ts.replace(" ", "_").replace(":", "-")
 
 formatted_ts = format_ts_for_silver(last_run_ts)
@@ -83,7 +81,6 @@ a1c_encoded_map = {">8": 2, "7-8": 1, "Norm": 0}
 glu_encoded_map = {">300": 3, ">200": 2, "Norm": 0}
 medication_encoding = {"Up": 1, "Down": -1, "Steady": 0, "No": 0}
 
-# Apply transformations
 age_udf = F.udf(lambda x: age_map.get(x, None), IntegerType())
 df = df.withColumn("age_num", age_udf(F.col("age")))
 df = df.withColumn("gender_num", 
@@ -139,7 +136,7 @@ df.write.mode("append") \
 print(f"✅ Incremental Gold written to {gold_path}")
 
 # ----------------------------
-# Step 6: Save Metadata (Feature Mapping & Schema)
+# Step 6: Save Metadata to metadata/silver_to_gold/{prev_ts}/
 # ----------------------------
 feature_mappings = {
     "age_map": age_map,
@@ -152,29 +149,25 @@ feature_mappings = {
 }
 schema_dict = {field.name: field.dataType.simpleString() for field in df.schema.fields}
 
-# Save mappings and schema
+prev_ts_folder = format_ts_for_silver(last_run_ts)
+metadata_path = f"metadata/silver_to_gold/{prev_ts_folder}/"
+
 s3.put_object(
     Bucket=bucket_name,
-    Key=f"{metadata_prefix}feature_mappings_{etl_load_ts}.json",
+    Key=f"{metadata_path}feature_mappings.json",
     Body=json.dumps(feature_mappings, indent=4),
     ServerSideEncryption="aws:kms"
 )
 s3.put_object(
     Bucket=bucket_name,
-    Key=f"{metadata_prefix}feature_mappings_latest.json",
-    Body=json.dumps(feature_mappings, indent=4),
-    ServerSideEncryption="aws:kms"
-)
-s3.put_object(
-    Bucket=bucket_name,
-    Key=f"{metadata_prefix}data_types_{etl_load_ts}.json",
+    Key=f"{metadata_path}data_types.json",
     Body=json.dumps(schema_dict, indent=4),
     ServerSideEncryption="aws:kms"
 )
-print("✅ Metadata (feature mappings & schema) saved.")
+print(f"✅ Metadata saved under: {metadata_path}")
 
 # ----------------------------
-# Step 7: Update delta.json
+# Step 7: Update delta.json with new timestamp
 # ----------------------------
 new_run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 s3.put_object(
@@ -185,5 +178,7 @@ s3.put_object(
 )
 print(f"✅ delta.json updated with last_run_ts: {new_run_ts}")
 
+# ----------------------------
 # Commit Glue Job
+# ----------------------------
 job.commit()
