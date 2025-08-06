@@ -25,6 +25,8 @@ job.init(args["JOB_NAME"], args)
 bucket_name = "healthcare-data-lake-07091998-csk"
 delta_key = "metadata/delta.json"
 s3 = boto3.client("s3")
+s3_resource = boto3.resource("s3")
+bucket = s3_resource.Bucket(bucket_name)
 
 # ----------------------------
 # Step 1: Get last_run_ts from delta.json
@@ -50,27 +52,45 @@ def fetch_last_run_ts():
 last_run_ts = fetch_last_run_ts()
 
 # ----------------------------
-# Step 2: Build Silver Path from last_run_ts
+# Step 2: Resolve Silver Path (auto fallback to latest if empty)
 # ----------------------------
 def format_ts(ts: str) -> str:
     return ts.replace(" ", "_").replace(":", "-")
 
-formatted_ts = format_ts(last_run_ts)
-silver_versioned_path = f"s3://{bucket_name}/silver/uci_raw_data_{formatted_ts}/"
-print(f"✅ Reading Silver version from: {silver_versioned_path}")
+def get_silver_path_from_ts(last_run_ts):
+    formatted_ts = format_ts(last_run_ts)
+    silver_prefix = f"silver/uci_raw_data_{formatted_ts}/"
+
+    # Check if parquet files exist in this prefix
+    objects = list(bucket.objects.filter(Prefix=silver_prefix))
+    parquet_files = [obj.key for obj in objects if obj.key.endswith(".parquet")]
+
+    if not parquet_files:  
+        print(f"⚠️ No parquet files in {silver_prefix}. Fetching latest Silver folder...")
+        # Fetch all silver folders
+        folders = set(
+            obj.key.split("/")[1] for obj in bucket.objects.filter(Prefix="silver/") if "uci_raw_data_" in obj.key
+        )
+        if not folders:
+            raise Exception("❌ No Silver folders found in bucket. Cannot proceed.")
+        latest_folder = sorted(folders)[-1]  # pick latest
+        return f"s3://{bucket_name}/silver/{latest_folder}/"
+    else:
+        return f"s3://{bucket_name}/{silver_prefix}"
+
+silver_versioned_path = get_silver_path_from_ts(last_run_ts)
+print(f"✅ Using Silver path: {silver_versioned_path}")
 
 # ----------------------------
-# Step 3: Validate Silver Path Exists & Read Data
+# Step 3: Read Silver Data Safely
 # ----------------------------
-s3_resource = boto3.resource("s3")
-bucket = s3_resource.Bucket(bucket_name)
-prefix = f"silver/uci_raw_data_{formatted_ts}/"
-
+prefix = silver_versioned_path.split(f"s3://{bucket_name}/")[1]
 files = [obj.key for obj in bucket.objects.filter(Prefix=prefix) if obj.key.endswith(".parquet")]
-if not files:
-    raise Exception(f"❌ No Parquet files found at {silver_versioned_path}. Check Silver ETL output!")
 
-df = spark.read.parquet(silver_versioned_path)
+if not files:
+    raise Exception(f"❌ No Parquet files found in {silver_versioned_path}")
+
+df = spark.read.parquet(*[f"s3://{bucket_name}/{f}" for f in files])
 
 # CDC Filter
 if "last_updated_ts" in df.columns:
@@ -147,7 +167,7 @@ df.write.mode("overwrite") \
 print(f"✅ Gold written to {gold_versioned_path}")
 
 # ----------------------------
-# Step 6: Save Metadata under metadata/silver_to_gold/{prev_ts}/
+# Step 6: Save Metadata in metadata/silver_to_gold/{prev_ts}/
 # ----------------------------
 feature_mappings = {
     "age_map": age_map,
@@ -177,7 +197,7 @@ s3.put_object(
 print(f"✅ Metadata saved under: {metadata_path}")
 
 # ----------------------------
-# Step 7: Update delta.json AFTER gold write
+# Step 7: Update delta.json AFTER successful Gold write
 # ----------------------------
 new_run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 s3.put_object(
